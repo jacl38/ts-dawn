@@ -58,6 +58,17 @@ facades exchange borrowed raw Node-API handles, C++ records, and resource owners
 with Dawn-facing implementation files. `NativeBoundary` preserves pending JS
 exceptions instead of transporting C++ exceptions between these configurations.
 
+`scripts/native/dawn-patches.ts` also guards Dawn's dictionary, enum and array
+conversion steps in the build-owned interop template and `Core.h`. With C++
+exceptions disabled, an accessor failure otherwise yields an empty `Napi::Value`;
+the subsequent enum `ToString()` can reach `Error::New` with a null environment
+and abort. Raw Node-API property access and enum coercion return immediately on
+failure, leaving the original JavaScript exception pending. Decoding completes
+before presentation replaces its configuration or retained device. The
+`configuration-exceptions.ts` subprocesses cover initial and replacement failures,
+arbitrary thrown values, recovery, surface readback and caller-owned devices in
+both runtimes as part of `native:verify --presentation` and native CI.
+
 Two integration probes established necessary adaptations to the build-owned
 nobind headers, leaving installed dependencies and vendored inputs unchanged:
 

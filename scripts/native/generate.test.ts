@@ -4,6 +4,14 @@ import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { root } from "./release";
+import { patchDescriptorConversions } from "./dawn-patches";
+
+const dictionaryObject = "  auto object = value.ToObject();";
+const dictionaryMembers = `{{-      if   $m.Init }}res = interop::FromJSOptional(env, object.Get("{{$m.Name}}"), out.{{$m.Name}});
+{{-      else         }}res = interop::FromJS(env, object.Get("{{$m.Name}}"), out.{{$m.Name}});`;
+const enumString = "  std::string str = value.ToString();";
+const arrayElement = "            auto res = Converter<T>::FromJS(env, arr[static_cast<uint32_t>(i)], vec[i]);";
+const conversionTemplate = [dictionaryObject, dictionaryMembers, enumString].join("\n");
 
 const temporary: string[] = [];
 afterEach(async () => {
@@ -61,13 +69,30 @@ test("Dawn patches operate on a copy and reject a missing upstream anchor", asyn
   await write(resolve(node, "binding/GPUDevice.h"), device);
   await write(resolve(node, "binding/GPU.h"), "    interop::GPUTextureFormat getPreferredCanvasFormat(Napi::Env) override;");
   await write(resolve(node, "binding/GPU.cpp"), "    interop::GPURequestAdapterOptions options) {\n        adapter = &a;\n    if (!adapter) {");
-  await write(resolve(node, "interop/WebGPU.cpp.tmpl"), "  return Wrappers::W{{$.Name}}::Unwrap(object)->impl.get();");
+  const template = `${conversionTemplate}\n  return Wrappers::W{{$.Name}}::Unwrap(object)->impl.get();`;
+  await write(resolve(node, "interop/WebGPU.cpp.tmpl"), template);
+  await write(resolve(node, "interop/Core.h"), arrayElement);
   const { patchDawnBindings } = await import(resolve(dir, "scripts/native/dawn-patches.ts"));
   await patchDawnBindings();
   expect(await Bun.file(resolve(node, "binding/GPUDevice.h")).text()).toBe(device);
+  expect(await Bun.file(resolve(node, "interop/WebGPU.cpp.tmpl")).text()).toBe(template);
+  expect(await Bun.file(resolve(node, "interop/Core.h")).text()).toBe(arrayElement);
+  expect(await Bun.file(resolve(dir, "build/native/binding/src/dawn/node/interop/WebGPU.cpp.tmpl")).text()).toContain("napi_get_named_property");
+  expect(await Bun.file(resolve(dir, "build/native/binding/src/dawn/node/interop/Core.h")).text()).toContain("napi_get_element");
   expect(await Bun.file(resolve(dir, "build/native/binding/src/dawn/node/binding/GPUDevice.h")).text()).toContain("GetNativeDevice");
   await Bun.write(resolve(node, "binding/GPUDevice.h"), "changed");
   await expect(patchDawnBindings()).rejects.toThrow("Native-device accessor patch no longer matches");
+});
+
+test("descriptor exception patches reject missing and duplicate conversion anchors", () => {
+  for(const anchor of [dictionaryObject, dictionaryMembers, enumString]) {
+    for(const template of [conversionTemplate.replace(anchor, "changed"), `${conversionTemplate}\n${anchor}`]) {
+      expect(() => patchDescriptorConversions(template, arrayElement)).toThrow("Descriptor exception patch no longer matches");
+    }
+  }
+  for(const core of ["changed", `${arrayElement}\n${arrayElement}`]) {
+    expect(() => patchDescriptorConversions(conversionTemplate, core)).toThrow("Descriptor exception patch no longer matches");
+  }
 });
 
 test("generation marker reuses unchanged outputs and detects extracted patch changes", async () => {

@@ -24,6 +24,10 @@ adapter against the native surface. Adapters/devices remain ordinary Dawn object
 format, usage, alpha mode and allowed view formats. It does not render a frame.
 Hostframe validates supported surface formats/usages/alpha modes, compatible view
 formats, device ownership and loss before replacing an existing configuration.
+If a descriptor getter or enum string conversion throws, `configure()` propagates
+the exact thrown value and preserves the previous configuration (or leaves an
+initial context unconfigured). Later configuration, rendering and disposal remain
+valid. This also applies to nested tone mapping and view-format elements.
 Only `colorSpace: "srgb"` and `toneMapping: { mode: "standard" }` are currently
 supported; other values throw explicitly. This is a native presentation context,
 not a DOM canvas or a complete implementation of `GPUCanvasContext`.
